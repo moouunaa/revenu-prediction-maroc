@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import joblib
 import numpy as np
-from typing import List, Optional
 import pandas as pd
 
 # Charger le modèle sauvegardé
@@ -20,46 +19,35 @@ app = FastAPI(title="API de Prédiction du Revenu Annuel",
 # Définir le modèle de données d'entrée
 class PredictionInput(BaseModel):
     # Variables numériques
-    age: float
+    age: int
     taille_foyer: float
-    aide_sociale: float  # Probablement 0 ou 1
-    a_acces_credit: float  # Probablement 0 ou 1
-    a_retraite: float  # Probablement 0 ou 1
-    possede_voiture: float  # Probablement 0 ou 1
-    possede_logement: float  # Probablement 0 ou 1
-    possede_terrain: float  # Probablement 0 ou 1
+    aide_sociale: int
+    a_acces_credit: int
+    a_retraite: int
+    possede_voiture: float
+    possede_logement: float
+    possede_terrain: int
     annees_experience: float
+    est_urbain: int
+    est_marie: int
+    weight: float = 1.0
     
-    # Variables catégorielles encodées
-    niveau_education_encoded: int
-    categorie_socioprofessionnelle_encoded: int
-    categorie_age_encoded: int
+    # Variables catégorielles
+    sexe: str
+    milieu: str
+    etat_matrimonial: str
+    region: str
+    niveau_education: str
+    categorie_socioprofessionnelle: str
     
-    # Variables binaires
-    sexe_Homme: bool
-    milieu_Urbain: bool
-    
-    # État matrimonial (one-hot encoding)
-    etat_matrimonial_Divorcé: bool
-    etat_matrimonial_Marié: bool
-    etat_matrimonial_Veuf: bool
-    
-    # Région (one-hot encoding)
-    region_Casablanca_Settat: bool
-    region_Dakhla_Oued_Ed_Dahab: bool
-    region_Drâa_Tafilalet: bool
-    region_Fès_Meknès: bool
-    region_Guelmim_Oued_Noun: bool
-    region_L_Oriental: bool
-    region_Laâyoune_Sakia_El_Hamra: bool
-    region_Marrakech_Safi: bool
-    region_Rabat_Salé_Kénitra: bool
-    region_Souss_Massa: bool
-    region_Tanger_Tétouan_Al_Hoceïma: bool
+    # Variables dérivées
+    revenu_par_experience: float = 0.0
+    niveau_socioeco: float = 0.0
 
 # Définir le modèle de données de sortie
 class PredictionOutput(BaseModel):
     revenu_predit: float
+    message: str
 
 # Endpoint pour la prédiction
 @app.post("/predict", response_model=PredictionOutput)
@@ -67,75 +55,47 @@ def predict(input_data: PredictionInput):
     if model is None:
         raise HTTPException(status_code=500, detail="Le modèle n'a pas pu être chargé")
     
-    # Calculer les caractéristiques dérivées
-    ratio_possessions = (input_data.possede_voiture + input_data.possede_logement + input_data.possede_terrain) / 3
-    ratio_experience_age = input_data.annees_experience / input_data.age if input_data.age > 0 else 0
-    
-    # Nous ne pouvons pas calculer revenu_par_personne car nous ne connaissons pas encore le revenu
-    # Nous utiliserons indice_stabilite comme une valeur fixe pour cet exemple
-    indice_stabilite = 0.5  # Valeur par défaut, à ajuster selon votre logique métier
-    
-    # Créer le vecteur de caractéristiques dans le même ordre que votre DataFrame
-    features = [
-        input_data.age,
-        input_data.taille_foyer,
-        input_data.aide_sociale,
-        input_data.a_acces_credit,
-        input_data.a_retraite,
-        input_data.possede_voiture,
-        input_data.possede_logement,
-        input_data.possede_terrain,
-        input_data.annees_experience,
-        # revenu_annuel est la variable cible, donc pas incluse ici
-        ratio_possessions,
-        indice_stabilite,
-        ratio_experience_age,
-        0,  # revenu_par_personne (sera ignoré par le modèle ou remplacé par une valeur par défaut)
-        input_data.niveau_education_encoded,
-        input_data.categorie_socioprofessionnelle_encoded,
-        input_data.categorie_age_encoded,
-        input_data.sexe_Homme,
-        input_data.milieu_Urbain,
-        input_data.etat_matrimonial_Divorcé,
-        input_data.etat_matrimonial_Marié,
-        input_data.etat_matrimonial_Veuf,
-        input_data.region_Casablanca_Settat,
-        input_data.region_Dakhla_Oued_Ed_Dahab,
-        input_data.region_Drâa_Tafilalet,
-        input_data.region_Fès_Meknès,
-        input_data.region_Guelmim_Oued_Noun,
-        input_data.region_L_Oriental,
-        input_data.region_Laâyoune_Sakia_El_Hamra,
-        input_data.region_Marrakech_Safi,
-        input_data.region_Rabat_Salé_Kénitra,
-        input_data.region_Souss_Massa,
-        input_data.region_Tanger_Tétouan_Al_Hoceïma
-    ]
-    
-    # Faire la prédiction
     try:
-        # Convertir les booléens en entiers (0 ou 1)
-        features_numeric = [float(f) if isinstance(f, bool) else f for f in features]
+        # Créer un DataFrame avec une ligne pour la prédiction
+        data = {
+            'age': input_data.age,
+            'sexe': input_data.sexe,
+            'milieu': input_data.milieu,
+            'etat_matrimonial': input_data.etat_matrimonial,
+            'region': input_data.region,
+            'niveau_education': input_data.niveau_education,
+            'categorie_socioprofessionnelle': input_data.categorie_socioprofessionnelle,
+            'taille_foyer': input_data.taille_foyer,
+            'aide_sociale': input_data.aide_sociale,
+            'a_acces_credit': input_data.a_acces_credit,
+            'a_retraite': input_data.a_retraite,
+            'possede_voiture': input_data.possede_voiture,
+            'possede_logement': input_data.possede_logement,
+            'possede_terrain': input_data.possede_terrain,
+            'annees_experience': input_data.annees_experience,
+            'revenu_par_experience': input_data.revenu_par_experience,
+            'niveau_socioeco': input_data.niveau_socioeco,
+            'est_urbain': input_data.est_urbain,
+            'est_marie': input_data.est_marie,
+            'weight': input_data.weight
+        }
         
-        # Créer un DataFrame avec les features
-        feature_names = [
-            'age', 'taille_foyer', 'aide_sociale', 'a_acces_credit', 'a_retraite',
-            'possede_voiture', 'possede_logement', 'possede_terrain', 'annees_experience',
-            'ratio_possessions', 'indice_stabilite', 'ratio_experience_age', 'revenu_par_personne',
-            'niveau_education_encoded', 'categorie_socioprofessionnelle_encoded', 'categorie_age_encoded',
-            'sexe_Homme', 'milieu_Urbain', 'etat_matrimonial_Divorcé', 'etat_matrimonial_Marié',
-            'etat_matrimonial_Veuf', 'region_Casablanca-Settat', 'region_Dakhla-Oued Ed-Dahab',
-            'region_Drâa-Tafilalet', 'region_Fès-Meknès', 'region_Guelmim-Oued Noun',
-            "region_L'Oriental", 'region_Laâyoune-Sakia El Hamra', 'region_Marrakech-Safi',
-            'region_Rabat-Salé-Kénitra', 'region_Souss-Massa', 'region_Tanger-Tétouan-Al Hoceïma'
-        ]
-        df = pd.DataFrame([features_numeric], columns=feature_names)
+        # Créer le DataFrame
+        df = pd.DataFrame([data])
         
-        # Faire la prédiction avec le DataFrame
+        # Afficher les colonnes pour le débogage
+        print(f"Colonnes du DataFrame: {df.columns.tolist()}")
+        
+        # Faire la prédiction
         prediction = model.predict(df)[0]
         
-        return PredictionOutput(revenu_predit=float(prediction))
+        # Préparer le message de retour
+        message = f"Le revenu annuel prédit est de {prediction:.2f} DH."
+        
+        return PredictionOutput(revenu_predit=float(prediction), message=message)
+    
     except Exception as e:
+        print(f"Erreur détaillée: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de la prédiction: {str(e)}")
 
 # Endpoint pour vérifier que l'API fonctionne
